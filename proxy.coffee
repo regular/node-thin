@@ -1,3 +1,6 @@
+http = require 'http'
+http.globalAgent.maxSockets = 1000;
+
 debug = require('debug')('build-proxy')
 crypto = require 'crypto'
 
@@ -6,6 +9,7 @@ proxy = new ManInTheMiddle({})
 
 cache = {}
 
+###
 proxy.use (req, res, next) ->
     url = proxy.getRequestURL req
     debug "Proxying: #{url}"
@@ -45,6 +49,7 @@ proxy.use (req, res, next) ->
             debug "wrote #{totalLength} bytes into cache"
 
         return next()
+###
 
 proxy.listen 8081, "localhost", (err) ->
     if err? then process.exit 1

@@ -6,6 +6,7 @@ os = require 'os'
 request = require 'request'
 URL = require 'url'
 debug = require('debug')('thin')
+async = require 'async'
 
 class ManInTheMiddle
 
@@ -13,6 +14,8 @@ class ManInTheMiddle
     # socket path for system mitm https server
     @socket = os.tmpdir() + "/node-thin." + process.pid + ".sock"
     @interceptors = []
+    @pending = 0
+    @q = async.queue @process, 1
 
   listen: (port, host, cb) =>
     # make sure there's no previously created socket
@@ -38,6 +41,7 @@ class ManInTheMiddle
       @httpsServer.close cb
 
   _handler: (req, res) =>
+    ###
     debug 'handler'
     interceptors = @interceptors.concat([@direct])
     layer = 0
@@ -49,12 +53,19 @@ class ManInTheMiddle
         undefined
     )()
     undefined
+    ###
+
+    @q.push {req, res}
+
+  process: ({req, res}, cb) =>
+    @direct req, res, cb
 
   _httpsHandler: (request, socketRequest, bodyhead) =>
     {url, httpVersion} = request
     
     # set up TCP connection
     proxySocket = new net.Socket()
+    debug 'connecting to internal https server ...'
     proxySocket.connect @socket, ->
       debug "> writing head of length #{bodyhead.length}"
       proxySocket.write bodyhead
@@ -62,72 +73,59 @@ class ManInTheMiddle
       # tell the caller the connection was successfully established
       socketRequest.write "HTTP/" + httpVersion + " 200 Connection established\r\n\r\n"
 
-    proxySocket.on "data", (chunk) ->
-      debug "< data length = %d", chunk.length
-      socketRequest.write chunk
-
-    proxySocket.on "end", ->
-      debug "< end"
-      socketRequest.end()
-
-    socketRequest.on "data", (chunk) ->
-      debug "> data length = %d", chunk.length
-      proxySocket.write chunk
-
-    socketRequest.on "end", ->
-      debug "> end"
-      proxySocket.end()
-
-    proxySocket.on "error", (err) ->
-      socketRequest.write "HTTP/" + httpVersion + " 500 Connection error\r\n\r\n"
-      debug "< ERR: %s", err
-      socketRequest.end()
-
-    socketRequest.on "error", (err) ->
-      debug "> ERR: %s", err
-      proxySocket.end()
-
+    proxySocket.pipe socketRequest
+    socketRequest.pipe proxySocket
   
   use: (fn) ->
     @interceptors.push fn
     return @
 
   removeInterceptors: ->
-    @interceptors.length = 0
-    return
+    @interceptors = []
 
   getRequestURL: (req) ->
     path = URL.parse(req.url).path
     schema = (if Boolean(req.client.pair) then "https" else "http")
     return schema + "://" + req.headers.host + path
 
-  direct: (req, res) =>
-    dest = @getRequestURL(req)
+  direct: (req, res, cb) =>
+    dest = @getRequestURL req
     params =
       url: dest
       strictSSL: false
+      followRedirect: true
+      followAllRedirects: true
       method: req.method
-      proxy: @opts.proxy
+      timeout: 4000
+      #proxy: @opts.proxy
       headers: {}
-
-    
+  
     # Set original headers except proxy system's headers
-    exclude = ["proxy-connection"]
-    for hname of req.headers
-      continue
-    buffer = ""
-    req.on "data", (chunk) ->
-      buffer += chunk
-      return
+    for key, value of req.headers
+      if key isnt "proxy-connection"
+        params.headers[key] = value
 
-    req.on "end", ->
-      params.body = buffer
-      r = request(params, (err, response) ->
-        
-        # don't save responses with codes other than 20
-        console.error err  if err or response.statusCode isnt 200
-        return
-      )
-      r.pipe res
+    #console.log params
+
+    debug "requesting #{dest}"
+    @pending++
+    debug "pending: #{@pending}"
+    r = request params, (err, response) =>
+      @pending--
+      
+      if err?
+        console.log "error requesting #{dest}: #{err}"
+        res.end()
+      
+      else
+        debug "responding #{response.statusCode} #{dest}"
+    
+      debug "pending: #{@pending}"
+      res.end()
+      
+      return cb err
+      
+    req.pipe r
+    r.pipe res
     
 module.exports = ManInTheMiddle
