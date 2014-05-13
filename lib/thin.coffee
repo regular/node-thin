@@ -7,6 +7,7 @@ request = require 'request'
 URL = require 'url'
 debug = require('debug')('thin')
 async = require 'async'
+through = require 'through'
 
 class ManInTheMiddle
 
@@ -15,7 +16,7 @@ class ManInTheMiddle
     @socket = os.tmpdir() + "/node-thin." + process.pid + ".sock"
     @interceptors = []
     @pending = 0
-    @q = async.queue @process, 1
+    @q = async.queue @process, 5
 
   listen: (port, host, cb) =>
     # make sure there's no previously created socket
@@ -71,10 +72,12 @@ class ManInTheMiddle
       proxySocket.write bodyhead
       
       # tell the caller the connection was successfully established
-      socketRequest.write "HTTP/" + httpVersion + " 200 Connection established\r\n\r\n"
+      socketRequest.write('HTTP/1.1 200 Connection Established\r\n' +
+                    'Proxy-agent: Node-Proxy\r\n' +
+                    '\r\n');
 
-    proxySocket.pipe socketRequest
-    socketRequest.pipe proxySocket
+      proxySocket.pipe socketRequest
+      socketRequest.pipe proxySocket
   
   use: (fn) ->
     @interceptors.push fn
@@ -93,10 +96,10 @@ class ManInTheMiddle
     params =
       url: dest
       strictSSL: false
-      followRedirect: true
-      followAllRedirects: true
+      followRedirect: false
+      followAllRedirects: false
       method: req.method
-      timeout: 4000
+      timeout: 5000
       #proxy: @opts.proxy
       headers: {}
   
@@ -105,27 +108,37 @@ class ManInTheMiddle
       if key isnt "proxy-connection"
         params.headers[key] = value
 
-    #console.log params
+    console.log params.headers
 
-    debug "requesting #{dest}"
+    debug "requesting #{req.method} #{dest}"
     @pending++
     debug "pending: #{@pending}"
-    r = request params, (err, response) =>
+
+    callback = (err, response) =>
       @pending--
       
       if err?
         console.log "error requesting #{dest}: #{err}"
-        res.end()
       
       else
-        debug "responding #{response.statusCode} #{dest}"
-    
-      debug "pending: #{@pending}"
-      res.end()
-      
+        debug "responding #{req.method} #{response.statusCode} #{dest}"
+
+      console.log response.headers
+      debug "pending: #{@pending}"      
       return cb err
+
+    r = request params, callback
       
     req.pipe r
     r.pipe res
-    
+
+    req.pipe through (data) ->
+      console.log "client: #{data.length}"
+      if req.method is 'POST'
+        console.log 'writing to file'
+        fs.writeFileSync __dirname + '/client.gz', data
+
+    r.pipe through (data) ->
+      console.log "server: #{data.length}"
+
 module.exports = ManInTheMiddle

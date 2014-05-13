@@ -2,8 +2,9 @@
   "name": "thin",
   "version": "0.1.0",
   "dependencies": {
-    "request": "~2.0",
-    "async": "^0.8.0"
+    "async": "^0.8.0",
+    "request": "^2.34.0",
+    "through": "^2.3.4"
   },
   "description": "HTTP/HTTPS debuggig proxy",
   "main": "index.js",
