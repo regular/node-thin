@@ -8,6 +8,7 @@ URL = require 'url'
 debug = require('debug')('thin')
 async = require 'async'
 through = require 'through'
+zlib = require 'zlib'
 
 class ManInTheMiddle
 
@@ -108,6 +109,7 @@ class ManInTheMiddle
       if key isnt "proxy-connection"
         params.headers[key] = value
 
+    console.log params.method + " " + dest
     console.log params.headers
 
     debug "requesting #{req.method} #{dest}"
@@ -132,11 +134,13 @@ class ManInTheMiddle
     req.pipe r
     r.pipe res
 
-    req.pipe through (data) ->
-      console.log "client: #{data.length}"
-      if req.method is 'POST'
-        console.log 'writing to file'
-        fs.writeFileSync __dirname + '/client.gz', data
+    clientStream = through (data) ->
+      console.log "CLIENT: #{data}"
+
+    if req.headers['content-encoding'] is 'gzip'
+      req.pipe(zlib.createGunzip()).pipe clientStream
+    else
+      req.pipe clientStream
 
     r.pipe through (data) ->
       console.log "server: #{data.length}"
