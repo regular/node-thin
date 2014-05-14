@@ -95,13 +95,11 @@ class ManInTheMiddle
   direct: (req, res, cb) =>
     dest = @getRequestURL req
     params =
-      url: dest
-      strictSSL: false
-      followRedirect: false
-      followAllRedirects: false
+      hostname: req.headers.host
+      port: URL.parse(req.url).port
+      path: URL.parse(req.url).path
       method: req.method
-      timeout: 5000
-      #proxy: @opts.proxy
+      rejectUnauthorized: false
       headers: {}
   
     # Set original headers except proxy system's headers
@@ -116,24 +114,29 @@ class ManInTheMiddle
     @pending++
     debug "pending: #{@pending}"
 
-    callback = (err, response) =>
+    r = null
+
+    callback = (response) =>
       @pending--
-      
-      if err?
-        console.log "error requesting #{dest}: #{err}"
-      
-      else
-        debug "responding #{req.method} #{response.statusCode} #{dest}"
-
+   
       console.log response.headers
-      debug "pending: #{@pending}"      
+      debug "pending: #{@pending}"
+      debug "responding #{req.method} #{response.statusCode} #{dest}"
+   
+      response.pipe through (data) ->
+        console.log "server: #{data.length}"
+
+      response.pipe res
+
+      return cb null
+
+    r = https.request params, callback
+    r.on 'error', (err) ->
+      console.log "ERROR requesting: #{dest} #{err}"
       return cb err
-
-    r = request params, callback
-      
+     
     req.pipe r
-    r.pipe res
-
+    
     clientStream = through (data) ->
       console.log "CLIENT: #{data}"
 
@@ -141,8 +144,5 @@ class ManInTheMiddle
       req.pipe(zlib.createGunzip()).pipe clientStream
     else
       req.pipe clientStream
-
-    r.pipe through (data) ->
-      console.log "server: #{data.length}"
 
 module.exports = ManInTheMiddle
